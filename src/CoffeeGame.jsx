@@ -1,5 +1,5 @@
 // src/CoffeeGame.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import Barista from './components/Barista';
 import Customer from './components/Customer';
 import Joystick from './components/Joystick';
@@ -8,112 +8,61 @@ import CoffeeBean from './components/CoffeeBean';
 import CoffeeCup from './components/CoffeeCup';
 import Decoration from './components/Decoration';
 
-// Yardımcı: Dikdörtgen çakışması kontrol fonksiyonu
-const rectIntersect = (r1, r2) =>
-  !(r2.x > r1.x + r1.width ||
-    r2.x + r2.width < r1.x ||
-    r2.y > r1.y + r1.height ||
-    r2.y + r2.height < r1.y);
+import useJoystick from './hooks/useJoystick';
+import useCustomers from './hooks/useCustomers';
+import useBaristaActions from './hooks/useBaristaActions';
+
+// Stil ve bölge ayarları
+const containerStyle = {
+  position: "relative",
+  width: "100vw",
+  height: "100vh",
+  backgroundColor: "#f5f5dc",
+  overflow: "hidden",
+  backgroundImage: "linear-gradient(to bottom, #f5f5dc, #e0d8c3)"
+};
+
+const counterHeight = 200;      // Tezgah yüksekliği
+const doorHeight = 150;         // Kapı yüksekliği
+const seatingTop = counterHeight;  // Oturma alanı, tezgahın altından başlar
+
+// Tezgah bölge tanımları
+const beanZone = { x: 20, y: 20, width: 100, height: 100 };
+const machineZone = { x: 140, y: 20, width: 120, height: 120 };
+const registerZone = { x: 300, y: 20, width: 100, height: 100 };
+
+// Oturma alanındaki masalar
+const tables = [
+  { x: 100, y: seatingTop + 50 },
+  { x: 300, y: seatingTop + 50 },
+  { x: 500, y: seatingTop + 50 },
+  { x: 200, y: seatingTop + 150 },
+  { x: 400, y: seatingTop + 150 }
+];
+
+const doorSpawn = { x: window.innerWidth - 150, y: 100 };
 
 const CoffeeGame = () => {
-  // --- (Önceki kısımlar değişmedi: container, zoneler, state'ler vs.) ---
-
-  const containerStyle = {
-    position: "relative",
-    width: "100vw",
-    height: "100vh",
-    backgroundColor: "#f5f5dc",
-    overflow: "hidden",
-    backgroundImage: "linear-gradient(to bottom, #f5f5dc, #e0d8c3)"
-  };
- 
-
-  // Bölge ayarları
-  const counterHeight = 200;      // Tezgah alanı yüksekliği
-  const doorHeight = 150;         // Kapı yüksekliği (Decoration bileşeninde)
-  const seatingTop = counterHeight;  // Oturma alanı, tezgahın altından başlar
-
-  // Tezgah alanı zoneleri (counter alanı içinde; sol üst köşe koordinatları)
-  const beanZone = { x: 20, y: 20, width: 100, height: 100 };
-  const machineZone = { x: 140, y: 20, width: 120, height: 120 };
-  const registerZone = { x: 300, y: 20, width: 100, height: 100 };
-
-  // Oturma alanında kullanılacak masalar (örnek)
-  const tables = [
-    { x: 100, y: seatingTop + 50 },
-    { x: 300, y: seatingTop + 50 },
-    { x: 500, y: seatingTop + 50 },
-    { x: 200, y: seatingTop + 150 },
-    { x: 400, y: seatingTop + 150 }
-  ];
-
-  const doorSpawnRef = useRef({ x: window.innerWidth - 150, y: 100 });
-  const customerTargetRef = useRef({
-    x: registerZone.x + registerZone.width / 2,
-    y: registerZone.y + registerZone.height / 2,
-  });
-
-  // Barista, para, progress ve diğer state'ler
+  // Barista, para ve işlem durumları
   const [baristaPos, setBaristaPos] = useState({ x: 200, y: counterHeight + 50 });
   const [carrying, setCarrying] = useState("none");       // "none", "bean", "cup"
   const [machineState, setMachineState] = useState("none"); // "none", "processing", "cup"
   const [money, setMoney] = useState(0);
-  const [beanProgress, setBeanProgress] = useState(100);    // %100 = çekirdek hazır
-  const [machineProgress, setMachineProgress] = useState(0);  // Makine işlemi progress
-  const [customer, setCustomer] = useState([]); // Add this at the top with other state declarations
+  const [beanProgress, setBeanProgress] = useState(100);
+  const [machineProgress, setMachineProgress] = useState(0);
 
-  // Joystick state
-  const [joystickActive, setJoystickActive] = useState(false);
-  const [joystickStart, setJoystickStart] = useState({ x: 0, y: 0 });
-  const [joystickOffset, setJoystickOffset] = useState({ x: 0, y: 0 });
-  const maxJoystickDistance = 50;
-  const maxSpeed = 3;
-  const [velocity, setVelocity] = useState({ x: 0, y: 0 });
+  // Joystick hook kullanımı
+  const {
+    joystickActive,
+    joystickStart,
+    joystickOffset,
+    velocity,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp
+  } = useJoystick(50, 3);
 
-  // Müşteri state: { x, y, served, order, route, target, waiting }
-  const doorSpawn = React.useMemo(() => ({ 
-    x: window.innerWidth - 150, 
-    y: 100 
-  }), []);
-
-  const customerTarget = React.useMemo(() => ({
-    x: registerZone.x + registerZone.width / 2,
-    y: registerZone.y + registerZone.height / 2
-  }), [registerZone]);
-
-  // --- Fonksiyonlar ---
-  const handleBaristaMouseDown = (e) => {
-    e.preventDefault();
-    setJoystickActive(true);
-    setJoystickStart({ x: e.clientX, y: e.clientY });
-    setJoystickOffset({ x: 0, y: 0 });
-  };
-
-  const handleJoystickMouseMove = (e) => {
-    if (!joystickActive) return;
-    const offsetX = e.clientX - joystickStart.x;
-    const offsetY = e.clientY - joystickStart.y;
-    let distance = Math.sqrt(offsetX ** 2 + offsetY ** 2);
-    let clampedX = offsetX, clampedY = offsetY;
-    if (distance > maxJoystickDistance) {
-      const ratio = maxJoystickDistance / distance;
-      clampedX = offsetX * ratio;
-      clampedY = offsetY * ratio;
-    }
-    setJoystickOffset({ x: clampedX, y: clampedY });
-    setVelocity({
-      x: (clampedX / maxJoystickDistance) * maxSpeed,
-      y: (clampedY / maxJoystickDistance) * maxSpeed,
-    });
-  };
-
-  const handleJoystickMouseUp = () => {
-    setJoystickActive(false);
-    setJoystickOffset({ x: 0, y: 0 });
-    setVelocity({ x: 0, y: 0 });
-  };
-
-  // Barista hareketi
+  // Barista pozisyonunun güncellenmesi (velocity ile)
   useEffect(() => {
     let animationFrameId;
     const updateBarista = () => {
@@ -126,174 +75,33 @@ const CoffeeGame = () => {
     animationFrameId = requestAnimationFrame(updateBarista);
     return () => cancelAnimationFrame(animationFrameId);
   }, [velocity]);
-  
 
-// Müşteri spawn efekti: Her 2000ms'de (2 saniyede) yeni bir müşteri ekle
-useEffect(() => {
-  const spawnInterval = setInterval(() => {
-    const newCustomer = {
-      id: Date.now(),
-      x: doorSpawnRef.current.x,
-      y: doorSpawnRef.current.y,
-      served: false,
-      order: "kahve",
-      route: null,
-      target: customerTargetRef.current,
-      waiting: false
-    };
-    console.log("Yeni müşteri spawn oldu:", newCustomer);
-    setCustomer(prev => [...prev, newCustomer]);
-  }, 10000);
-  return () => clearInterval(spawnInterval);
-}, []); // boş dependency dizisi: efekt yalnızca mount edildiğinde kurulacak
+  // Müşteriler hook’u (spawn ve güncelleme)
+  const [customers, setCustomers] = useCustomers(doorSpawn, registerZone, tables);
 
-
-
-// Müşteri güncelleme efekti: Tüm müşterileri, belirlenen hedeflerine doğru hareket ettir
-useEffect(() => {
-  let animationFrameId;
-  const updateCustomers = () => {
-    setCustomer(prev => {
-      // Eğer prev undefined ise (defansif kullanım), boş dizi döndürün
-      const current = prev || [];
-      return current
-        .map(customer => {
-          let updated = { ...customer };
-          if (updated.target) {
-            const dx = updated.target.x - updated.x;
-            const dy = updated.target.y - updated.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist > 1) {
-              // Müşteri hızı: 2 piksel/frame (isteğe bağlı ayarlanabilir)
-              const step = 2;
-              updated.x += (dx / dist) * step;
-              updated.y += (dy / dist) * step;
-            } else {
-              // Hedefe ulaştıysa:
-              if (updated.served && !updated.route) {
-                // Eğer sipariş teslim edildiyse, rastgele rota belirle: "sit" veya "exit"
-                const route = Math.random() < 0.5 ? "sit" : "exit";
-                if (route === "sit") {
-                  const table = tables[Math.floor(Math.random() * tables.length)];
-                  updated.route = "sit";
-                  // Masanın ortasına gitmek için hedef belirle
-                  updated.target = { x: table.x + 75, y: table.y + 40 };
-                } else {
-                  updated.route = "exit";
-                  updated.target = doorSpawn; // Kapı yönüne
-                }
-              }
-              // Eğer müşteri "sit" rotasındaysa ve masada oturuyorsa, 5 saniye bekledikten sonra kapıya git
-              if (updated.route === "sit" && !updated.waiting) {
-                updated.waiting = true;
-                setTimeout(() => {
-                  setCustomer(currentCustomers =>
-                    currentCustomers.map(c =>
-                      c.id === updated.id ? { ...c, target: doorSpawn } : c
-                    )
-                  );
-                }, 5000);
-              }
-            }
-          }
-          return updated;
-        })
-        .filter(c => {
-          // Eğer müşteri "exit" rotasındaysa ve kapıya ulaştıysa, listeden çıkar
-          if (c.route === "exit") {
-            const dx = c.x - doorSpawn.x;
-            const dy = c.y - doorSpawn.y;
-            if (Math.sqrt(dx * dx + dy * dy) < 50) return false;
-          }
-          return true;
-        });
-    });
-    animationFrameId = requestAnimationFrame(updateCustomers);
-  };
-  animationFrameId = requestAnimationFrame(updateCustomers);
-  return () => cancelAnimationFrame(animationFrameId);
-}, [tables, doorSpawn, customerTarget]);
-
-
-// İşlem Zinciri: Bean alma, Makine İşlemesi, Sipariş Teslimi
-useEffect(() => {
-  const baristaBox = { x: baristaPos.x, y: baristaPos.y, width: 60, height: 60 };
-
-  // Bean Station: Eğer barista beanZone ile çakışıyor, elinde hiçbir şey yoksa VE beanProgress %100 ise
-  if (rectIntersect(baristaBox, beanZone) && carrying === "none" && beanProgress === 100) {
-    setCarrying("bean");
-    console.log("Çekirdek alındı");
-    setBeanProgress(0);
-    const duration = 7000;
-    const interval = 50;
-    let elapsed = 0;
-    const timer = setInterval(() => {
-      elapsed += interval;
-      const prog = Math.min((elapsed / duration) * 100, 100);
-      setBeanProgress(prog);
-      if (prog >= 100) {
-        clearInterval(timer);
-      }
-    }, interval);
-  }
-
-  // Kahve Makinesi: Eğer barista, elinde "bean" varken machineZone ile çakışırsa
-  if (rectIntersect(baristaBox, machineZone)) {
-    if (carrying === "bean" && machineState === "none") {
-      setCarrying("none");
-      setMachineState("processing");
-      console.log("Makinede işleme başladı");
-      setMachineProgress(0);
-      const duration = 2000;
-      const interval = 50;
-      let elapsed = 0;
-      const timer = setInterval(() => {
-        elapsed += interval;
-        const prog = Math.min((elapsed / duration) * 100, 100);
-        setMachineProgress(prog);
-        if (prog >= 100) {
-          clearInterval(timer);
-          setMachineState("cup");
-          setMachineProgress(0);
-          console.log("Bardak hazır");
-        }
-      }, interval);
-    } else if (machineState === "cup" && carrying === "none") {
-      setCarrying("cup");
-      setMachineState("none");
-      console.log("Bardak alındı");
-    }
-  }
-
-      // Sipariş Teslimi: Eğer herhangi bir müşteri registerZone içerisine girmiş VE barista "cup" taşıyorsa
-  if (customer.length > 0 && carrying === "cup") {
-    customer.forEach(cust => {
-      if (!cust.served && rectIntersect(cust, registerZone)) {
-        const dx = cust.x - baristaPos.x;
-        const dy = cust.y - baristaPos.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 50) {
-          setCarrying("none");
-          // Önemli: Müşteri teslim edildiğinde, route "exit" ve target kapı olarak atanır
-          setCustomer(current =>
-            current.map(item =>
-              item.id === cust.id
-                ? { ...item, served: true, route: "exit", target: doorSpawn }
-                : item
-            )
-          );
-          setMoney(prev => prev + 10);
-          console.log("Sipariş teslim edildi, para kazanıldı!");
-        }
-      }
-    });
-  }
-}, [baristaPos, carrying, machineState, customer, beanProgress, beanZone, machineZone, registerZone]);
-
+  // Barista aksiyonlarını yöneten hook (bean alma, makine, sipariş teslimi)
+  useBaristaActions({
+    baristaPos,
+    carrying,
+    setCarrying,
+    beanProgress,
+    setBeanProgress,
+    machineState,
+    setMachineState,
+    machineProgress,
+    setMachineProgress,
+    customers,
+    setCustomers,
+    setMoney,
+    beanZone,
+    machineZone,
+    registerZone,
+    doorSpawn
+  });
 
   return (
     <div style={containerStyle}>
-      {/* Dekorasyon (Kapı ve Duvar Süsleri) */}
+      {/* Dekorasyon: Kapı, duvar süsleri vb. */}
       <Decoration />
 
       {/* Tezgah Alanı */}
@@ -431,8 +239,8 @@ useEffect(() => {
         </div>
       </div>
 
-      {/* Müşteri */}
-      {customer.map(c => (
+      {/* Müşteriler */}
+      {customers.map(c => (
         <div key={c.id} style={{ position: "absolute", left: c.x, top: c.y }}>
           <Customer order={c.order} served={c.served} />
         </div>
@@ -440,7 +248,7 @@ useEffect(() => {
 
       {/* Barista */}
       <div
-        onMouseDown={handleBaristaMouseDown}
+        onMouseDown={handleMouseDown}
         style={{
           position: "absolute",
           left: baristaPos.x,
@@ -455,8 +263,8 @@ useEffect(() => {
       {/* Joystick Overlay */}
       {joystickActive && (
         <div
-          onMouseMove={handleJoystickMouseMove}
-          onMouseUp={handleJoystickMouseUp}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
           style={{
             position: "fixed",
             top: 0,
@@ -469,7 +277,7 @@ useEffect(() => {
           <Joystick
             joystickStart={joystickStart}
             joystickOffset={joystickOffset}
-            maxJoystickDistance={maxJoystickDistance}
+            maxJoystickDistance={50}
           />
         </div>
       )}
