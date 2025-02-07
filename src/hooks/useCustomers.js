@@ -8,8 +8,9 @@ const useCustomers = (doorSpawn, registerZone, tables) => {
     x: registerZone.x + registerZone.width / 2,
     y: registerZone.y + registerZone.height / 2,
   });
+  const safeDistance = 50; // Müşteriler arası minimum mesafe
 
-  // Belirli aralıklarla müşteri oluşturma (örnekte 10 saniyede bir)
+  // Müşteri oluşturma: Her 10 saniyede bir yeni müşteri spawn oluyor.
   useEffect(() => {
     const spawnInterval = setInterval(() => {
       const newCustomer = {
@@ -17,10 +18,13 @@ const useCustomers = (doorSpawn, registerZone, tables) => {
         x: doorSpawnRef.current.x,
         y: doorSpawnRef.current.y,
         served: false,
-        order: "kahve",
+        // Sipariş rastgele: %50 "kahve", %50 "latte"
+        order: Math.random() < 0.5 ? "kahve" : "latte",
         route: null,
         target: customerTargetRef.current,
-        waiting: false
+        waiting: false,
+        width: 40,
+        height: 40,
       };
       console.log("Yeni müşteri spawn oldu:", newCustomer);
       setCustomers(prev => [...prev, newCustomer]);
@@ -28,7 +32,7 @@ const useCustomers = (doorSpawn, registerZone, tables) => {
     return () => clearInterval(spawnInterval);
   }, []);
 
-  // Müşterilerin hedeflerine doğru hareket ettirilmesi ve rotalarının güncellenmesi
+  // Müşterilerin hareketi ve exit kontrolü
   useEffect(() => {
     let animationFrameId;
     const updateCustomers = () => {
@@ -42,26 +46,47 @@ const useCustomers = (doorSpawn, registerZone, tables) => {
               const dy = updated.target.y - updated.y;
               const dist = Math.sqrt(dx * dx + dy * dy);
               if (dist > 1) {
-                // Müşteri hızı: 2 piksel/frame
                 const step = 2;
-                updated.x += (dx / dist) * step;
-                updated.y += (dy / dist) * step;
+                // Potansiyel yeni konum
+                const newX = updated.x + (dx / dist) * step;
+                const newY = updated.y + (dy / dist) * step;
+                let colliding = false;
+                // Çarpışma kontrolünü yalnızca gelen (route === null) müşteriler için uygula.
+                if (!updated.route) {
+                  colliding = current.some(other => {
+                    if (other.id === updated.id) return false;
+                    // Yalnızca diğer gelen müşterilerle (route === null) kontrol yap:
+                    if (other.route) return false;
+                    const otherDist = Math.sqrt(
+                      (updated.target.x - other.x) ** 2 +
+                      (updated.target.y - other.y) ** 2
+                    );
+                    // Hedefe daha yakın (öne geçmiş) bir müşteri varsa:
+                    if (otherDist < dist) {
+                      const dBetween = Math.sqrt((other.x - newX) ** 2 + (other.y - newY) ** 2);
+                      if (dBetween < safeDistance) return true;
+                    }
+                    return false;
+                  });
+                }
+                if (!colliding) {
+                  updated.x = newX;
+                  updated.y = newY;
+                }
               } else {
-                // Hedefe ulaşınca:
+                // Hedefe ulaştığında:
                 if (updated.served && !updated.route) {
-                  // Sipariş teslim edildiyse: rastgele "sit" veya "exit" rotası belirle
+                  // Sipariş teslim edildiyse, rastgele "sit" veya "exit" rotası belirle
                   const route = Math.random() < 0.5 ? "sit" : "exit";
                   if (route === "sit") {
                     const table = tables[Math.floor(Math.random() * tables.length)];
                     updated.route = "sit";
-                    // Masanın ortasına gitmek için hedef belirle
                     updated.target = { x: table.x + 75, y: table.y + 40 };
                   } else {
                     updated.route = "exit";
                     updated.target = doorSpawn;
                   }
                 }
-                // "Sit" rotasında masada bekleyip 5 saniye sonra kapıya yönelme
                 if (updated.route === "sit" && !updated.waiting) {
                   updated.waiting = true;
                   setTimeout(() => {
@@ -77,7 +102,7 @@ const useCustomers = (doorSpawn, registerZone, tables) => {
             return updated;
           })
           .filter(c => {
-            // "Exit" rotasındaki müşteri kapıya ulaştıysa listeden çıkar
+            // Exit rotasındaki müşteri, doorSpawn’a yakınsa listeden çıkar.
             if (c.route === "exit") {
               const dx = c.x - doorSpawn.x;
               const dy = c.y - doorSpawn.y;
